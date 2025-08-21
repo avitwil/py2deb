@@ -50,10 +50,8 @@ def help_menu():
     print(Fore.YELLOW + "  --sudo                " + Fore.WHITE + "Add 'sudo' to package dependencies")
     print(Fore.YELLOW + "  --setup               " + Fore.WHITE + "Create a setup script alongside the DEB")
     print(Fore.YELLOW + "  --tar-gz              " + Fore.WHITE + "Create a tar.gz archive containing DEB and setup script")
+    print(Fore.YELLOW + "  -man, --man_page <file>" + Fore.WHITE + "Add man page for the command")
     print(Fore.YELLOW + "  -h, --help            " + Fore.WHITE + "Show this help message and exit\n")
-    print(Fore.GREEN + "EXAMPLES:")
-    print(Fore.CYAN + "  py2deb myscript.py -cn 'Avi Twil' -email 'avi@example.com' --command mycmd --sudo --setup --tar-gz")
-    print(Fore.CYAN + "  py2deb py2deb.py -cn 'Avi Twil' -email 'avi@example.com' --command py2deb\n")
 
 def parse_python_dependencies(py_file):
     deps = set()
@@ -101,6 +99,14 @@ def copy_python_file(build_dir, py_file, app_name):
     target_path.chmod(0o755)
     return target_path
 
+def copy_man_page(build_dir, man_file, app_name):
+    man_dir = build_dir / "usr/share/man/man1"
+    man_dir.mkdir(parents=True, exist_ok=True)
+    target_path = man_dir / f"{app_name}.1"
+    shutil.copy(man_file, target_path)
+    subprocess.run(["gzip", "-f", str(target_path)], check=True)
+    print(f"Man page installed: {target_path}.gz")
+
 def create_tar_gz(deb_file, setup_script):
     tar_name = f"{deb_file.stem}.tar.gz"
     with tarfile.open(tar_name,"w:gz") as tar:
@@ -110,38 +116,21 @@ def create_tar_gz(deb_file, setup_script):
     print(f"Created tar.gz: {tar_name}")
 
 def explain_tool():
-    """
-    Print a detailed explanation of the Py2Deb tool.
-    """
     print(Fore.CYAN + "\n===== About Py2Deb =====\n")
     print(Fore.YELLOW + "Py2Deb is a utility to automatically create Debian (.deb) packages from Python scripts.\n")
     print(Fore.GREEN + "Purpose:")
     print(Fore.WHITE + "- Package any Python script as a .deb file.")
     print(Fore.WHITE + "- Automatically detect Python dependencies and map them to Debian packages.")
     print(Fore.WHITE + "- Optionally create a setup installation script and a tar.gz archive.\n")
-
-    print(Fore.GREEN + "How it works:")
-    print(Fore.WHITE + "1. Reads your Python script to detect imported modules.")
-    print(Fore.WHITE + "2. Maps known modules to Debian packages, adds them as dependencies.")
-    print(Fore.WHITE + "3. Creates the DEB package structure and control file automatically.")
-    print(Fore.WHITE + "4. Copies your Python script to /usr/local/bin and makes it executable.")
-    print(Fore.WHITE + "5. Optionally creates a setup script and/or tar.gz archive containing the package.\n")
-
     print(Fore.GREEN + "Key options:")
     print(Fore.WHITE + "-cn <creator_name>     Specify the creator of the package")
     print(Fore.WHITE + "-email <creator_email> Specify creator email")
     print(Fore.WHITE + "--command <name>      Name of the executable command after installation")
     print(Fore.WHITE + "--sudo                 Add sudo as a package dependency")
     print(Fore.WHITE + "--setup                Generate an install.sh setup script")
-    print(Fore.WHITE + "--tar-gz               Create a tar.gz containing DEB and setup script\n")
-    print(Fore.WHITE + "-h , --help               load help menu\n")
-
-    print(Fore.CYAN + "Example:")
-    print(
-        Fore.WHITE + "  py2deb myscript.py -cn 'Avi Twil' -email 'avi@example.com' --command mycmd --sudo --setup --tar-gz\n")
-
-    print(
-        Fore.MAGENTA + "Created by " + Fore.YELLOW + "Avi Twil " + Fore.MAGENTA + "from " + Fore.CYAN + "Twil Industries\n")
+    print(Fore.WHITE + "--tar-gz               Create a tar.gz containing DEB and setup script")
+    print(Fore.WHITE + "-man, --man_page <file>  Add man page for the command\n")
+    print(Fore.MAGENTA + "Created by " + Fore.YELLOW + "Avi Twil " + Fore.MAGENTA + "from " + Fore.CYAN + "Twil Industries\n")
 
 def main():
     parser = argparse.ArgumentParser(add_help=False)
@@ -152,24 +141,19 @@ def main():
     parser.add_argument("--sudo", action="store_true", help="Add sudo dependency")
     parser.add_argument("--setup", action="store_true", help="Create setup script")
     parser.add_argument("--tar-gz", action="store_true", help="Create tar.gz archive")
+    parser.add_argument("-man", "--man_page", help="Path to man page file")
     parser.add_argument("-h", "--help", action="store_true", help="Show help menu")
     args = parser.parse_args()
 
-    if len(sys.argv)==1:
-        print_logo()
-        explain_tool()
-        sys.exit(1)
-
-    if args.help:
+    if len(sys.argv)==1 or args.help:
         print_logo()
         help_menu()
         sys.exit(1)
 
     print_logo()
     py_file = Path(args.file)
-
-    if not args.file:
-        print(Fore.RED + "Error: missing Python file to package\n")
+    if not args.file or not py_file.exists():
+        print(Fore.RED + "Error: missing or invalid Python file to package\n")
         help_menu()
         sys.exit(1)
 
@@ -187,10 +171,6 @@ def main():
         args.creator_email = "unknown@example.com"
         print(Fore.YELLOW + f"Warning: no creator email provided, using default: {Fore.CYAN}{args.creator_email}")
 
-    if not py_file.exists():
-        print("Python file does not exist.")
-        sys.exit(1)
-
     app_name = args.command
     deps = parse_python_dependencies(py_file)
     print(f"Detected dependencies: {deps}")
@@ -199,12 +179,20 @@ def main():
     write_control_file(build_dir, app_name, args.creator_name, args.creator_email, args.sudo, deps)
     copy_python_file(build_dir, py_file, app_name)
 
-    # יצירת DEB בקובץ חיצוני (ליד הסקריפט)
+    # הוספת man page אם נבחר
+    if args.man_page:
+        man_file = Path(args.man_page)
+        if man_file.exists():
+            copy_man_page(build_dir, man_file, app_name)
+        else:
+            print(Fore.RED + f"Error: man page file {man_file} not found")
+
+    # יצירת DEB בקובץ חיצוני
     deb_file = Path(f"{app_name}.deb")
     subprocess.run(["dpkg-deb", "--build", str(build_dir), str(deb_file)], check=True)
     print(f"DEB package created: {deb_file}")
 
-    # יצירת install.sh באותה תיקייה כמו ה-DEB
+    # יצירת install.sh
     setup_script = None
     if args.setup:
         setup_script = deb_file.parent / "install.sh"
